@@ -10,6 +10,7 @@ to POC assumptions that this Apex documentation surfaced.
 | # | Document | Covers |
 |---|---|---|
 | 1 | Confluence doc, shared 2026-07-29 | Apex Classes master index + 8 Trigger Handler/Helper deep-dives (Account, Attachment, ContentDocumentLink ×2, DocumentLinkUploadEvent, InterestedProduct, Lead, OpportunityProduct, Opportunity ×2, OppStatusChange, SystemLog ×2, WhatsappChat) |
+| 2 | Google Doc, shared 2026-07-29 | All 13 REST Endpoints (UploadEnquiryForm, FetchOutstandingBalance, OnlineCheckout, UploadAppointmentForm, UploadContactUsForm, UploadProductImages, UploadSellOrExchange ×3, UploadSourcing ×3, LeadConvert) |
 
 ---
 
@@ -37,6 +38,15 @@ referring to `OUTBOUND_CreateWatch` (SFDC→SMS, about the watch) and the Order 
 internal stage-triggered logic? This changes the HubSpot design meaningfully — internal
 stage-triggered creation maps to a HubSpot workflow on Deal stage change, not an inbound API
 handler.
+
+**Update from the REST Endpoints doc:** `REST_onlineCheckout` (`/onlineCheckout`) *does*
+create/update Opportunities directly from an inbound call — but it creates them with
+RecordType `Outright_Purchase_Xupes`, a **Xupes-branded** record type, not the Watches
+`Outright Purchase` (`0121t0000000n8cAAA`) our pipeline routing table uses. So this endpoint
+does **not** resolve the question above — it's a different (out-of-scope) checkout flow, not
+the Chrono24/Watches one. The real inbound Order-creation endpoint, if one exists, is still
+unaccounted for. Worth naming this specifically when asking the developer: "not
+onlineCheckout — is there another one?"
 
 ### 2. Part Exchange scope — diagram says out of scope, this doc says otherwise
 
@@ -71,6 +81,16 @@ Confirmed chain, SFDC-side, not the SMS:
 **Implication for HubSpot:** this upload step is Apex automation that needs a real
 replacement (e.g. a webhook/serverless function on file upload), not something that
 disappears on its own — there's no "SMS already does this" shortcut.
+
+**Update from the REST Endpoints doc — a second image intake path exists:**
+`REST_uploadProductImages` (`/uploadProductImages/*`) accepts a raw image body plus a
+`parentId` (Opportunity or Lead) directly, and creates the ContentVersion/ContentDocumentLink
+itself — no SMS or Attachment object involved. This feeds into the *same*
+`ContentDocumentLinkTriggerHandler` → S3 pipeline above once the link is created. So there
+are two independent ways images enter the system (this direct REST upload, and whatever
+creates ContentVersions via the documented SMS flow), both converging on the same S3 export
+logic. Worth confirming with the developer which path Chrono24/Watches images actually use in
+practice — matters for what the HubSpot-side upload trigger needs to listen for.
 
 ### Who populates Payment.Order_Payment__c (open question #2) — partially answered
 `OpportunityTriggerHandler` §5c (Part Exchange → Closed Won) explicitly stamps
@@ -159,6 +179,12 @@ dropped with sign-off):
    trigger → property/stage automation → workflow email), flagged in the source doc itself
    as needing more scoping.
 6. **Sold-product validation** — see `validateProductSold` above.
+7. **Live outstanding-balance lookup** (`REST_fetchOutstandingBalance`) — the website portal
+   calls this in real time to show a customer `Total_Sold_Price__c - Total_Payment__c` for an
+   Opportunity. Department-agnostic (not Xupes-hardcoded), so plausibly still needed for
+   Chrono24/Watches customers too. HubSpot equivalent would be a live API read (Deal amount
+   minus associated Payment totals) exposed to whatever the website calls — needs a decision
+   on whether the portal keeps calling a custom endpoint or this becomes a HubSpot API read.
 
 ---
 
@@ -170,7 +196,7 @@ review as more Confluence docs arrive — not yet deep-dived beyond what's summa
 | Category | Count | Watches/Chrono24 relevance |
 |---|---|---|
 | Trigger Handlers & Helpers | 17 | **Reviewed in this pass** (8 of 17 deep-dived above); remaining: OpportunityProductTriggerHandler ✅ reviewed, PartExchangeTriggerHandler/Helper (empty stubs, skip) |
-| REST Endpoints | 13 | Mostly website form intake (enquiry/appointment/contact/sell-exchange/sourcing) — need triage per form; `REST_onlineCheckout` worth checking against the Order-creation-direction question above |
+| REST Endpoints | 13 | **Reviewed.** 9 of 13 are Xupes-branded Lead intake with hardcoded department (Handbags/Jewellery/Accessories) — **out of scope**: UploadEnquiryForm, UploadContactUsForm, UploadSellOrExchange ×3, UploadSourcing ×3. `REST_onlineCheckout` also out of scope (Xupes RecordType, see correction #1 update above) but does NOT explain Watches Order creation. Genuinely relevant/needs-review: `REST_fetchOutstandingBalance` (department-agnostic, live balance — see Additional Integration Work #7), `REST_uploadProductImages` (second image-intake path, see S3 answer above), `REST_uploadAppointmentForm` (department comes from payload, not hardcoded — could include Watches, needs confirming), `REST_LeadConvert` (generic Lead→Opportunity conversion via email-matched Account, low priority given Watches barely uses Leads) |
 | Batch Classes | 9 | Mostly S3 upload batches (already covered via trigger docs) + Google Analytics — GA batches are candidates to drop (native HubSpot analytics instead) pending her confirmation |
 | Document Generation (Xupes & Document) | 19 | Split Chrono24-branded (`DocumentGeneratorService` etc., in scope) vs **Xupes-branded** (`XupesDocumentGeneratorService`, `XupesPartExchange*`, in scope only if Xupes Watches business is in scope — needs confirmation, likely mostly out of scope per "Chrono24 only" framing) |
 | eBay Integration (EC_\*) | 10 | Separate marketplace channel; **touches Offer_History\_\_c** (one of our 4 custom objects) — means Offer History records can originate from eBay sync too, not just the Chrono24 SMS flow. Otherwise likely out of scope for this migration. |
