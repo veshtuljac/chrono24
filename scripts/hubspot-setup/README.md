@@ -47,14 +47,18 @@ failed list — paste that back for review if anything's in `failed`.
 - Several dropdown option lists are marked `PARTIAL` in `setup.py` — built
   from sample data seen in this conversation, not a confirmed full
   `GROUP BY` against Supabase. Affected: `deals.department`,
-  `deals.lead_source_detail`, `inventory_product.status`,
-  `customer_product.record_type`. Sending a value outside the configured
-  options will fail at write time until the list is extended.
+  `deals.lead_source_detail`, `inventory_product.status`.
+  Sending a value outside the configured options will fail at write time
+  until the list is extended.
 - `commerce_payments.xupes_payment_method_detail` was added even though it's
   not a row in the sheet — it's the field-mapping.md recommendation for
   carrying the raw 13-value payment method past HubSpot's fixed 9-value
   `hs_payment_method_type` enum. Drop it if that's not wanted.
-- `customer_product.record_type` currently has exactly one option
-  (`0121t0000000ljSAAQ`) — this is the open "4 unused (Xupes) RecordType
-  variants + unused Restore Handbag RecordType" question from the task
-  list, still unresolved.
+- `customer_product.record_type` — confirmed via a live Supabase `GROUP BY`
+  + a production (not sandbox) Developer Console RecordType lookup: the
+  real Watches value is `0124J000000MWTTQA4` ("Watch"), now the only option
+  in `setup.py`. The sheet's original `0121t0000000ljSAAQ` was a
+  sandbox-only Id that doesn't exist in production data at all — see
+  `full-migration-plan.md` correction #4. The "4 unused (Xupes) RecordType
+  variants + unused Restore Handbag RecordType" question is still open, but
+  doesn't block this property since none of those are the Watches value.

@@ -318,7 +318,14 @@ PROPERTIES = {
 
     "customer_product": [
         # brand created inline with the schema (primary display)
-        SELECT("record_type", "Record Type", ["0121t0000000ljSAAQ"]),  # PARTIAL — see README
+        # Value is the real production RecordTypeId (confirmed via SFDC Developer Console
+        # query against production, not sandbox — sandbox Ids don't match production ones).
+        # The sheet's original 0121t0000000ljSAAQ was a sandbox-only Id that doesn't appear
+        # in production data at all.
+        {
+            "name": "record_type", "label": "Record Type", "type": "enumeration", "fieldType": "select",
+            "options": [{"label": "Watch", "value": "0124J000000MWTTQA4"}],
+        },
         TXT("model", "Model"),
         TXT("model_number", "Model Number"),
         SELECT("condition", "Condition", [

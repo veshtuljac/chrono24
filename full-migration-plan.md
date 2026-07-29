@@ -100,6 +100,31 @@ not Watches.
 assigned to the field the query filters on), empty `execute()`/`finish()`. Never do anything
 even if invoked.
 
+### 4. `customer_product.record_type` — sheet value was a sandbox-only ID, doesn't exist in production
+
+Live Supabase query (`GROUP BY RecordTypeId` on Agreement_Item__c) came back with two
+production IDs, neither matching the sheet's `0121t0000000ljSAAQ` (a sandbox-only value —
+sandbox and production have different Id prefixes, established at the start of this project).
+Resolved both via `SELECT Id, Name, DeveloperName, SobjectType FROM RecordType WHERE Id IN
+(...)` in the **production** Developer Console (not sandbox — production IDs, `0124J...`
+prefix):
+
+| Id | Name | Count in Supabase | Meaning |
+|---|---|---|---|
+| `0124J000000MWTTQA4` | Watch | 18,156 | The real Watches value — use this in `customer_product.record_type`, not the sheet's sandbox ID |
+| `0124J000000MWTSQA4` | Jewellery | 1 | **Not noise** — a genuine Jewellery-RecordType record present in what was assumed to be a Watches-only dataset |
+| *(null)* | — | 8,130 (31%) | Still open — need to ask the developer whether these predate RecordType being made mandatory, or something else |
+
+**Two actions:**
+1. Fix `customer_product.record_type` (in HubSpot and in `scripts/hubspot-setup/setup.py`) to
+   use `0124J000000MWTTQA4` ("Watch"), not the sandbox ID.
+2. **Scoping implication for history migration:** the Agreement_Item__c dataset used for this
+   check was not purely Watches — at least one non-Watches (Jewellery) record leaked in. Any
+   query built for the real historical migration must explicitly filter
+   `RecordTypeId = '0124J000000MWTTQA4'`, not assume the source dataset is already
+   Watches-only. Worth spot-checking other objects for the same kind of leakage before trusting
+   row counts elsewhere in this plan.
+
 ---
 
 ## ✅ Open questions this document answers
