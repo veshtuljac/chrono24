@@ -370,43 +370,96 @@ alongside `Opportunity__c` (→ Deal) and `Product__c` (soft link → Inventory 
 
 ---
 
-## 🧱 Additional integration work (not data migration — logic that needs a HubSpot-side equivalent)
+## 🧱 Automation backlog (behavior-level, not data migration)
 
-Beyond copying field values, these SFDC Apex behaviors are business logic that need their
-own design decision + build in HubSpot (workflows, custom code actions, or deliberately
-dropped with sign-off):
+Organized by **what it does**, not by which Apex class implements it — a single behavior
+often spans several classes (trigger + helper + handler + Constants + templates), so a
+class-by-class list would fragment things that need to be designed as one piece. Each item
+notes its source classes for traceability. This is the format to keep using for the Flow
+review too — same backlog, regardless of whether the SFDC side was Apex or a Flow.
 
-1. **Order creation/update on Deal stage change** (Outright Sale & Part Exchange →
-   "Package Waiting for Dispatch"; Part Exchange → "Closed Won" full build-out). Core
-   business logic, not optional.
-2. **Order ↔ Customer Product / Line Item / Payment linking** at Order creation time —
-   needs the new Customer Product↔Order association (see above) plus equivalent linking
-   logic in whatever creates Orders in HubSpot.
-3. **Email notifications on stage change** — Closed Won, Closed Rejected, Payment Approved
+**Tier 1 — core transactional logic, not optional**
+
+1. **Order creation/update on Deal stage change.** Outright Sale & Part Exchange →
+   "Package Waiting for Dispatch" creates/updates an Order; Part Exchange → "Closed Won" does
+   a fuller build-out. *Source: `OpportunityTriggerHandler` §5a–5c.*
+2. **Order ↔ Customer Product / Line Item / Payment linking** at Order creation time — needs
+   the Customer Product↔Order association (already added to `setup.py`) plus equivalent
+   linking logic wherever Orders get created in HubSpot. *Source: `OpportunityTriggerHandler`
+   §5a/§5c.*
+3. **Sold-product validation** — block Deal → Closed Won if any line item's product is
+   already Sold/Sold By Partner. *Source: `OpportunityTriggerHelper.validateProductSold`.*
+4. **File upload → S3 pipeline.** Two entry points (ContentDocument link, direct REST image
+   upload) both need to end up in S3 with the same filename convention
+   (`{title}_{parentId}_{timestamp}.{ext}`, cross-validated above) for Attached Image URLs to
+   keep working. Not something that "goes away" on its own. *Source:
+   `ContentDocumentLinkTriggerHandler` → `DocumentLinkUploadEventTriggerHandler` →
+   `AWSUtils.uploadDocument`; `REST_uploadProductImages`.*
+
+**Tier 2 — customer-facing communication, important but not transaction-blocking**
+
+5. **Stage-change email notifications** — Closed Won, Closed Rejected, Payment Approved
    (Watches dept), Negotiation/Closed Refunded team alerts, signed-agreement delivery to
-   client + internal notice. Maps to HubSpot workflow emails; needs template-by-template
-   triage (~6+ distinct templates referenced).
-3a. Hardcoded recipient emails (e.g. `jodie.freestone@xupes.com`) flagged by her own team as
+   client + internal notice. ~6+ distinct templates to triage one by one.
+   *Source: `OpportunityTriggerHandler` §5d–5f, `OpportunityTriggerHelper.SendMailToOpp`,
+   `OppStatusChangeHandler`.*
+6. **Document classification + agreement stage automation** — file uploaded → classify by
+   filename keywords (Final Watch Sales/Consignment Agreement, Part Exchange Agreement,
+   Provisional Watch Agreement) → bump Deal stage → notify. Flagged in the source doc itself
+   as needing more scoping before it can be built. *Source: `ContentDocumentLinkTriggerHandler`
+   afterInsert.*
+7. **Customer offer accepted/rejected notification** — validates account email + product
+   price, stamps notification fields, moves Deal to Negotiation (accepted) or Closed Lost
+   (rejected), sends email + (unimplemented in SFDC today) SMS. *Source:
+   `BLL_Opportunity.notifyCustomerOfferAccepted/Rejected`.*
+8. **Signed-link email delivery for agreements/invoices** — JWT-signed URL generated,
+   stored on the record, emailed to the customer with a merge-field template; the invoice
+   variant also attaches the generated PDF. Maps to a "generate secure link + send email"
+   workflow need, not a data field. *Source: `JWT_serviceLeadAgreement`,
+   `JWT_serviceOrderInvoice`, `JWT_serviceWatchProvAgree`.*
+9. **`last_customer_email_date` auto-update** — customer reply forwarded to an SFDC email
+   service address, sender parsed, timestamp stamped on the open Lead/Opportunity. *Source:
+   `LastCustomerContactEmailHandler`.*
+
+**Tier 3 — internal/admin, lower urgency**
+
+10. **Country whitelist validation on Company/Contact** — blocks save if billing country
+    isn't in an admin-editable list. Needs a HubSpot equivalent (property validation or
+    workflow) plus a decision on where the editable list lives and how failures surface to
+    users — both explicitly still open per the source doc's own FAQ. *Source:
+    `AccountTriggerHandler`.*
+11. **Live outstanding-balance lookup** — website calls this in real time to show
+    `Total_Sold_Price__c - Total_Payment__c`. Department-agnostic, plausibly still needed for
+    Chrono24 customers. Needs `Total_Sold_Price__c`/`Total_Payment__c` added as Deal
+    properties first (see field findings above) if this gets built. *Source:
+    `REST_fetchOutstandingBalance`.*
+12. **Product status sync to Magento/website** — "in stock"/"on hold"/"sold" pushed out on
+    status change. SFDC-and-Magento-side today; needs a decision on whether HubSpot's
+    Inventory Product needs an equivalent outbound hook, or this stays entirely
+    SFDC/Magento's concern untouched by the migration. *Source: `OUTBOUND_MarkProductAsSold`,
+    `OUTBOUND_UpdateProductStatus`, `WebsiteInStockAction`, `WebsiteOnHoldAction`,
+    `WebsiteSoldAction`.*
+13. Hardcoded recipient emails (e.g. `jodie.freestone@xupes.com`) flagged by her own team as
     needing domain updates — operational cleanup, parallel workstream, not ours to fix but
-    worth tracking as a dependency.
-4. **Country whitelist validation on Company/Contact** (`AccountTriggerHandler`) — blocks
-   save if billing country isn't in an admin-editable list. Needs a HubSpot equivalent
-   (property validation or workflow) plus a decision on where the editable list lives and
-   how validation failures surface to users — both explicitly still open per the source doc's
-   own FAQ.
-5. **Document classification + agreement stage automation**
-   (`ContentDocumentLinkTriggerHandler`) — file uploaded → classify by filename keywords
-   (Final Watch Sales/Consignment Agreement, Part Exchange Agreement, Provisional Watch
-   Agreement) → bump Deal stage → notify. Real workflow to design in HubSpot (file upload
-   trigger → property/stage automation → workflow email), flagged in the source doc itself
-   as needing more scoping.
-6. **Sold-product validation** — see `validateProductSold` above.
-7. **Live outstanding-balance lookup** (`REST_fetchOutstandingBalance`) — the website portal
-   calls this in real time to show a customer `Total_Sold_Price__c - Total_Payment__c` for an
-   Opportunity. Department-agnostic (not Xupes-hardcoded), so plausibly still needed for
-   Chrono24/Watches customers too. HubSpot equivalent would be a live API read (Deal amount
-   minus associated Payment totals) exposed to whatever the website calls — needs a decision
-   on whether the portal keeps calling a custom endpoint or this becomes a HubSpot API read.
+    worth tracking as a dependency for item 5.
+
+**Blocked — can't scope until the two open developer questions resolve**
+
+14. **"Create watch" button action** — once confirmed what `OUTBOUND_CreateWatch` actually
+    does (correction #1/#5), decide whether it needs a HubSpot-side equivalent at all.
+15. **Chrono24 inbound-email → Lead capture** — if `CreateLeadExample` turns out to be live
+    (correction #6), this entire six-branch behavior (offers/orders/messages/inquiries →
+    Lead, by email parsing) needs its own design as a real, sizeable piece of work — not
+    scoped at all yet, since it wasn't expected to exist.
+
+**Confirmed skip — no action needed**
+
+- Google Analytics tracking (dead: points at a sunset Universal Analytics property)
+- WhatsApp/Periskope classes (native HubSpot↔Periskope integration planned instead)
+- `OpportunityAttachmentBatch`, `S3AttachmentUploadHandler`, `S3UploadHandler` (dead stub code)
+- eBay integration (separate marketplace channel, not part of the Chrono24/SMS flow)
+- `Create1stDibsLead` (confirmed not in use)
+- Twilio SMS in `BLL_Opportunity.sendMessage` (commented out, never implemented)
 
 ---
 
