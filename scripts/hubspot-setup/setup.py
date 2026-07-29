@@ -5,8 +5,14 @@ Chrono24 SFDC -> HubSpot POC: one-time schema setup (objects, properties, associ
 Source of truth: the Label/Internal name/Group mapping sheet (shared 2026-07-29) +
 the data model diagram (Deal/Payment/Order association typeIds).
 
-Usage (VS Code: just hit Run, after setting HUBSPOT_TOKEN below or as an env var):
+Usage — easiest path (VS Code Run button, no terminal needed):
+    1. Create a file called token.txt in this same folder
+       (scripts/hubspot-setup/token.txt).
+    2. Paste your HubSpot Private App token into it (just the token, nothing
+       else) and save. That file is gitignored — it will never get committed.
+    3. Hit Run on this file.
 
+Usage — terminal alternative:
     HUBSPOT_TOKEN=pat-eu1-xxxx python3 setup.py
 
 No pip install needed — standard library only.
@@ -25,7 +31,16 @@ from pathlib import Path
 
 TOKEN = os.environ.get("HUBSPOT_TOKEN")
 if not TOKEN:
-    print("Missing HUBSPOT_TOKEN env var. Run: HUBSPOT_TOKEN=pat-... python3 setup.py")
+    token_file = Path(__file__).parent / "token.txt"
+    if token_file.exists():
+        TOKEN = token_file.read_text().strip()
+
+if not TOKEN:
+    print(
+        "No token found. Either:\n"
+        "  - create scripts/hubspot-setup/token.txt with just the token pasted in, or\n"
+        "  - run: HUBSPOT_TOKEN=pat-... python3 setup.py"
+    )
     sys.exit(1)
 
 BASE = "https://api.hubapi.com"

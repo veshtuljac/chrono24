@@ -7,13 +7,18 @@ diagram.
 
 ## Run
 
+Easiest path, no terminal needed:
+1. Create `scripts/hubspot-setup/token.txt` and paste just the token into it, save.
+2. Hit Run on `setup.py` in VS Code.
+
+`token.txt` is gitignored — it never gets committed.
+
+Terminal alternative:
 ```
 HUBSPOT_TOKEN=pat-eu1-xxxx python3 scripts/hubspot-setup/setup.py
 ```
 
-Standard library only (`urllib`) — no `pip install` needed. In VS Code, set
-`HUBSPOT_TOKEN` in your terminal first (or in a `.env` your run config
-loads), then just hit Run on `setup.py`.
+Standard library only (`urllib`) — no `pip install` needed.
 
 Safe to re-run — every step checks for an existing schema/group/property/
 association label before creating it, so a partial failure can just be
