@@ -44,7 +44,7 @@ if not TOKEN:
     sys.exit(1)
 
 BASE = "https://api.hubapi.com"
-summary = {"created": [], "skipped": [], "failed": []}
+summary = {"created": [], "skipped": [], "failed": [], "warnings": []}
 
 
 def hs(method, path, body=None):
@@ -118,6 +118,11 @@ CUSTOM_OBJECTS = [
 
 
 def ensure_object_schema(defn):
+    # NOTE: secondaryDisplayProperties/searchableProperties are deliberately left
+    # out here — they reference properties that don't exist yet at this point
+    # (created later in step 3). Setting them inline caused HubSpot to reject
+    # (or half-create) the schema. ensure_schema_display_properties() sets them
+    # afterwards, once every property actually exists.
     existing = hs("GET", f"/crm/v3/schemas/{defn['name']}")
     if existing["ok"]:
         summary["skipped"].append(f"schema:{defn['name']} (already exists)")
@@ -126,8 +131,6 @@ def ensure_object_schema(defn):
         "name": defn["name"],
         "labels": defn["labels"],
         "primaryDisplayProperty": defn["primaryDisplayProperty"],
-        "secondaryDisplayProperties": defn["secondaryDisplayProperties"],
-        "searchableProperties": defn["searchableProperties"],
         "requiredProperties": [],
         "properties": [
             {
@@ -142,6 +145,23 @@ def ensure_object_schema(defn):
         summary["created"].append(f"schema:{defn['name']}")
     else:
         summary["failed"].append(f"schema:{defn['name']} -> {res['status']} {json.dumps(res['body'])}")
+
+
+def ensure_schema_display_properties(defn):
+    """Best-effort: set secondary display + searchable properties now that
+    every property on the object actually exists. Purely cosmetic (HubSpot
+    UI list view / search) — failure here is logged as a warning, not a
+    blocking failure."""
+    res = hs("PATCH", f"/crm/v3/schemas/{defn['name']}", {
+        "secondaryDisplayProperties": defn["secondaryDisplayProperties"],
+        "searchableProperties": defn["searchableProperties"],
+    })
+    if res["ok"]:
+        summary["created"].append(f"schema-display-props:{defn['name']}")
+    else:
+        summary["warnings"].append(
+            f"schema-display-props:{defn['name']} -> {res['status']} {json.dumps(res['body'])}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +207,13 @@ def NUM(name, label):
 
 
 def BOOL(name, label):
-    return {"name": name, "label": label, "type": "bool", "fieldType": "booleancheckbox"}
+    return {
+        "name": name, "label": label, "type": "bool", "fieldType": "booleancheckbox",
+        "options": [
+            {"label": "True", "value": "true", "hidden": False, "displayOrder": 0},
+            {"label": "False", "value": "false", "hidden": False, "displayOrder": 1},
+        ],
+    }
 
 
 def DATE(name, label):
@@ -195,12 +221,12 @@ def DATE(name, label):
 
 
 def SELECT(name, label, labels):
-    return {"name": name, "label": label, "type": "enum", "fieldType": "select",
+    return {"name": name, "label": label, "type": "enumeration", "fieldType": "select",
             "options": [opt(l) for l in labels]}
 
 
 def MULTI(name, label, labels):
-    return {"name": name, "label": label, "type": "enum", "fieldType": "checkbox",
+    return {"name": name, "label": label, "type": "enumeration", "fieldType": "checkbox",
             "options": [opt(l) for l in labels]}
 
 
@@ -413,11 +439,18 @@ def main():
     for defn in ASSOCIATIONS:
         ensure_association_label(defn)
 
+    print("== 5. Schema display/search properties (cosmetic, best-effort) ==")
+    for defn in CUSTOM_OBJECTS:
+        ensure_schema_display_properties(defn)
+
     print("\n=== SUMMARY ===")
     print(f"Created: {len(summary['created'])}")
     for x in summary["created"]:
         print("  +", x)
     print(f"Skipped (already existed): {len(summary['skipped'])}")
+    print(f"Warnings (non-blocking): {len(summary['warnings'])}")
+    for x in summary["warnings"]:
+        print("  ~", x)
     print(f"Failed: {len(summary['failed'])}")
     for x in summary["failed"]:
         print("  !", x)
