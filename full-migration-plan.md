@@ -15,6 +15,12 @@ to POC assumptions that this Apex documentation surfaced.
 | 4 | Google Doc, shared 2026-07-29 | Document Generation (Xupes & Document) — AWSDocumentService, DocumentDataRetriever, DocumentGeneratorService/Controller, DocumentPayloadBuilder, DocumentValidator, and the Xupes-branded equivalents |
 | 5 | Google Doc, shared 2026-07-29 | eBay Integration (EC_\*) — all 10 classes (CreateEbayInboundLead, DebugMessaging, EbayQueueableApex, LeadEbayProcess, LeadLineItemUtility, LeadUtility, OfferHistoryHandler, Product2Utility, RestCallouts, EbayOffer) |
 | 6 | Google Doc, shared 2026-07-29 | Outbound Integrations + JWT + UTIL + Website Flow Actions — OUTBOUND_CreateWatch, OUTBOUND_GetChat, OUTBOUND_MarkProductAsSold, OUTBOUND_UpdateOrder, OUTBOUND_UpdateProductStatus, JWT_service ×3, UTIL_Integration, UTIL_Logger, UTIL_System, WebsiteInStockAction, WebsiteOnHoldAction, WebsiteSoldAction |
+| 7 | Google Doc, shared 2026-07-29 | DAL / BLL / DTO Classes — all 17 (DAL_ApiEndpoint, DAL_CustomerProduct, DAL_Opportunity, DAL_Product, BLL_CustomerProduct, BLL_Document, BLL_Opportunity, BLL_WhatsappChat, Constants, DTO_CreateWatchRequest/Response, DTO_OnlineCheckout, DTO_OpportunityPayload, DTO_PeriskopeChatPayload/MessagePayload, DTO_ProductPayload, DTO_WebsiteFormPayload/SellOrExchangePayload/SourcingPayload, OrderUpdateWrapper) |
+| 8 | Google Doc, shared 2026-07-29 | Controllers — all 14 (ChangePasswordController, ClientPreferenceController, CompleteOrderController, ForgotPasswordController, MyProfilePageController, OrderDocumentGeneratorController, RequestDocumentController, SiteLoginController, SiteRegisterController, WhatsappController, imageAttachmentController, imageAttachmentListDesignController, imageViewerDesignController, leadListController) |
+| 9 | Google Doc, shared 2026-07-29 | Utility / Other — all 10 (AWSUtils, ConvertCurrencyInToWords, Create1stDibsLead, CreateLeadExample, CreateLiveChatLead, CurrencyUpdateHelper/Scheduler, ImageRotationHandler, InterestedProductHelper, LastCustomerContactEmailHandler, VonageCallSummaryScheduler, MultiRequestMock) |
+
+**This completes the full Apex Classes master index — every category from task 1's index is
+now reviewed.** See the updated triage table at the bottom for the final state.
 
 ---
 
@@ -165,6 +171,19 @@ be an unrelated availability-alert feature that happens to share the word "watch
 actually create — an alert subscription, or something else?" rather than assuming it's
 Order/inventory-related.
 
+**Further confirmed by the DAL/BLL/DTO doc, strengthening this reading rather than
+weakening it:** `DTO_CreateWatchRequest`'s field list is exactly the same 3 fields
+(`opportunityId`, `customerProductId`, `productType`) — no product identity data anywhere in
+the object. And critically, the caller — `BLL_CustomerProduct.createWatchOnCustomerProduct`
+— is `@AuraEnabled`, meaning it's wired to a **manual button/action in the SFDC UI** (a
+Lightning/Aura component), not an automated trigger or scheduled job. So "create watch" is a
+user-initiated click on a Customer Product record, gated behind field-completeness validation
+(PO number, brand, model, price, case material, etc., plus extra checks specific to 'ATS
+Product'/'To Order'/'Consignment' product types) — that whole shape fits a manual
+"submit this item for [something]" action far better than automatic Order or inventory
+creation. Treat the original "/api/createWatch inbound" description from the POC's starting
+context as unconfirmed until the developer clarifies what this button is actually for.
+
 **Also resolved in this doc — `OUTBOUND_UpdateOrder` confirms the real Order data flow is
 SFDC → SMS, not the other way:** it sends two payload types ("sell" and "updateOrder") pushing
 existing Order/Opportunity/OrderItem data *out* to the Stock Management System after the Order
@@ -210,6 +229,40 @@ The Outbound Integrations doc has an inline note on `OUTBOUND_GetChat`: *"We wil
 integration with Hubspot and Periskope, can skip these Apex Classes related to Periskope."*
 Matches the earlier finding (System Log / Whatsapp Chat trigger handlers) — now confirmed from
 two independent places in the documentation, not just an assumption.
+
+### 6. Tension: does Chrono24/Watches actually go through Lead\_\_c after all?
+
+We've treated "Watches doesn't use Leads — that's Xupes-only" as settled (confirmed FAQ answer
+in doc #1: *"As far as my knowledge goes they don't use Leads. Xupes uses Leads."*). The
+Utility/Other doc puts real pressure on that.
+
+**`CreateLeadExample`** is an inbound email handler that processes **Chrono24-branded**
+notification emails — offers, orders, messages, inquiries, Trusted Checkout events — parsing
+subject lines that match `Constants.CHRONO24_EMAIL_SUBJECT_*` (`'Purchase offer accepted'`,
+`"You've received a new order"`, `"You've received a new counteroffer"`, etc. — the exact
+Chrono24 email subjects, not Xupes ones). On a match with no existing Lead, it **creates a
+Lead**, department hardcoded to Watches. This is by far the largest/most complex inbound email
+handler in the org (six branching paths). If this class actually runs, it means Chrono24
+customer offers/messages/orders create a `Lead__c` record *before* anything becomes an
+Opportunity — directly contradicting the "Watches doesn't use Leads" answer.
+
+**The catch:** the documentation's own annotation on this class is uncertain, not
+confirmed either way: *"Doesnt look like we use this?"* — a question, not a statement.
+Same uncertain annotation on the sibling class `CreateLiveChatLead` (Chrono24 live-chat
+transcripts → Lead). Contrast with `Create1stDibsLead` right next to it, which has an
+unambiguous *"Not in use"* note, and `LastCustomerContactEmailHandler`, confirmed *"Yes, this
+class is actively used."* The fact that reviewers were willing to mark those two definitively
+but left `CreateLeadExample`/`CreateLiveChatLead` as open questions suggests real uncertainty,
+not an oversight.
+
+**This needs a direct answer from the developer, not an inference:** is
+`CreateLeadExample` (the inbound email service for Chrono24 notification emails) actually
+wired up and receiving mail today? If yes, Lead\_\_c is a real intermediate step for at least
+some Chrono24/Watches customer interactions (offers, messages, orders arriving by email before
+Salesforce has an Opportunity) and the POC's "Watches doesn't use Leads" premise needs
+revisiting — including whether a Lead→Contact-equivalent flow needs modeling in HubSpot at
+all. If no (matching the "not in use" pattern of its neighbors), no scope change, just a
+confirmed dead class to skip.
 
 ---
 
@@ -286,12 +339,34 @@ alongside `Opportunity__c` (→ Deal) and `Product__c` (soft link → Inventory 
   `Department__c`, `Opportunity__c` lookup). Diagram lists Enquiries as out of scope; this
   looks like derived/bookkeeping data with no obvious HubSpot analogue needed — recommend
   explicitly deciding "don't replicate" rather than leaving it unaddressed.
-- **Lead / Lead\_\_c confirmed Xupes-only, not used by Chrono24 Watches** — per the doc's own
-  FAQ answer ("As far as my knowledge goes they don't use Leads. Xupes uses Leads."). Good
-  confirmation that our POC's "Flow 1 (Lead)" name is a Chrono24/SMS naming convention
-  mapping to HubSpot **Contact**, unrelated to the actual SFDC `Lead__c` object — worth a
-  one-line clarification in field-mapping.md so this terminology collision doesn't confuse
-  anyone reading both docs later.
+- **Lead / Lead\_\_c — no longer a clean "Xupes-only" confirmation, see correction #6.**
+  Earlier treated as settled that Watches doesn't use Leads; the Utility/Other doc's
+  `CreateLeadExample` class (Chrono24-branded inbound email → Lead creation) puts that in
+  question, with the documentation's own annotation reading as uncertain rather than
+  resolved. Don't write the "Flow 1 = Contact, unrelated to Lead\_\_c" clarification into
+  field-mapping.md until this is confirmed either way with the developer.
+- **`inventory_product.status` — a 4th confirmed value found.** The `Constants` class lists
+  Product Status as `Sold`, `In Stock`, `On Hold`, `Sold By Partner` — code-level constants,
+  not sample-data inference. Our POC's `PARTIAL` option list only had 3 (missing "On Hold").
+  Fixed directly in `scripts/hubspot-setup/setup.py` (see below) — still not a guaranteed
+  *complete* list, just more complete than before.
+- **`last_customer_email_date` — population mechanism now confirmed.**
+  `LastCustomerContactEmailHandler` (confirmed *actively used*, unlike its neighbors) is an
+  inbound email handler: customer replies get forwarded to a Salesforce email-service address,
+  it regex-parses the original sender, and stamps `Last_Customer_Email_Date__c` = now on
+  matching open Leads/Opportunities. If HubSpot needs the same tracking, this is an
+  "inbound email → property update" workflow to design, not just a field to copy.
+- **Search/dedup key evidence found — relevant to the still-unwritten field-mapping.md
+  section on this.** `DAL_Opportunity.findOpenOpportunitiesByEmail` is SFDC's own dedup query
+  for finding an existing open Outright Purchase Opportunity: filtered by RecordType +
+  `Account.AccountReference__c` (= email) match, most-recently-modified first. This is the
+  actual, real search key the org uses today for one specific case — good concrete input for
+  that section once it gets written.
+- **S3 filename pattern cross-validated.** `AWSUtils.uploadToS3` builds filenames as
+  `{title}_{parentId}_{timestamp}.{extension}` — matches the `{ContentVersionId}_{OpportunityId}_{suffix}`
+  pattern already observed directly in Fry's Attached Image records
+  (`buchanan-fry-poc-data.md`). Two independent sources agreeing — high confidence this
+  pattern is stable, not a one-off.
 
 ---
 
@@ -346,15 +421,28 @@ review as more Confluence docs arrive — not yet deep-dived beyond what's summa
 | REST Endpoints | 13 | **Reviewed.** 9 of 13 are Xupes-branded Lead intake with hardcoded department (Handbags/Jewellery/Accessories) — **out of scope**: UploadEnquiryForm, UploadContactUsForm, UploadSellOrExchange ×3, UploadSourcing ×3. `REST_onlineCheckout` also out of scope (Xupes RecordType, see correction #1 update above) but does NOT explain Watches Order creation. Genuinely relevant/needs-review: `REST_fetchOutstandingBalance` (department-agnostic, live balance — see Additional Integration Work #7), `REST_uploadProductImages` (second image-intake path, see S3 answer above), `REST_uploadAppointmentForm` (department comes from payload, not hardcoded — could include Watches, needs confirming), `REST_LeadConvert` (generic Lead→Opportunity conversion via email-matched Account, low priority given Watches barely uses Leads) |
 | Batch Classes | 9 | **Reviewed.** 3 Google Analytics batches — hardcoded to a **Universal Analytics** tracking ID (`UA-126246953-1`), which Google sunset in July 2023, so this is already dead/broken tracking, not just a migration candidate — strong case to drop rather than replicate. `LeadAttachmentBatch`/`LeadContentDocBatch`/`OpportunityContentDocumentBatch` = the real S3 upload logic (see correction #3 above). `OpportunityAttachmentBatch`, `S3AttachmentUploadHandler`, `S3UploadHandler` = confirmed dead stub code, skip entirely. |
 | Document Generation (Xupes & Document) | 19 | **Reviewed (Chrono24 side).** `AWSDocumentService`/`DocumentGeneratorService`/`DocumentDataRetriever`/`DocumentPayloadBuilder`/`DocumentValidator` confirmed as the real invoice/agreement PDF generation pipeline (AWS Lambda-based) — resolves `Invoice_Number__c` (formula field, see correction #5 above). Xupes-branded twins (`XupesDocumentGeneratorService`, `XupesPartExchange*`) not deep-dived — still presumed out of scope per "Chrono24 only" framing, low priority to review further. |
-| eBay Integration (EC_\*) | 10 | **Reviewed.** Confirmed fully out of scope for Chrono24/Watches — creates `Lead__c` records (which Watches doesn't use at all, confirmed separately) from eBay buyer messages/offers. Does touch `Offer_History__c` (one of our 4 custom objects) via `EC_OfferHistoryHandler`/`EC_EbayQueueableApex`, confirming Offer History records can originate from eBay sync too — historical-data awareness only, not a live integration to build. |
-| Outbound Integrations (OUTBOUND_\*, JWT_\*, UTIL_\*) | 14 | **Reviewed.** `OUTBOUND_UpdateOrder` = full confirmed SFDC→SMS Order field mapping (see correction #5 above) — the real "existing sync" reference. `OUTBOUND_CreateWatch` reinterpreted — likely a restock/availability-alert subscription, not inventory/Order creation (see correction #5). `OUTBOUND_GetChat`/Periskope explicitly confirmed skippable by her team. `OUTBOUND_MarkProductAsSold`/`OUTBOUND_UpdateProductStatus`/`WebsiteInStockAction`/`WebsiteOnHoldAction`/`WebsiteSoldAction` all push product status to Magento/website — SFDC-and-Magento-side concern, not currently modeled in our HubSpot Inventory Product object; flag for a decision on whether HubSpot needs an equivalent outbound hook later. `JWT_service*` ×3 = signed-link email delivery for agreements/invoices, maps to a "generate secure link + send email" workflow need in HubSpot, not a data field. `UTIL_Logger`/`UTIL_System`/`UTIL_Integration` = shared infra (logging, prod/sandbox detection, auth token fetching), no HubSpot equivalent needed as data, but the auth pattern is relevant if HubSpot ever calls the SMS directly. |
-| DAL / BLL / DTO Classes | 17 | Supporting query/business-logic/data-transfer layer for the above — review alongside their callers, not standalone |
-| Controllers | 14 | Mostly Lightning/Visualforce UI controllers (community portal, password reset, document preview) — likely **out of scope** (UI layer being replaced, not migrated) |
-| Utility / Other | 10 | Mixed — inbound email parsers (1stDibs, Chrono24, live chat leads) relevant if those channels stay; `CurrencyUpdateHelper`/`Scheduler` (exchange rates) worth checking against `deal_currency_code`/`currency` properties |
-| WhatsApp/Periskope (System Log, Whatsapp Chat handlers) | — | **Confirmed out of scope** per her team's own FAQ answers — Periskope has a native WhatsApp integration, no need to migrate |
+| eBay Integration (EC_\*) | 10 | **Reviewed.** Out of scope for Chrono24/Watches as a *live integration* — creates `Lead__c` records from eBay buyer messages/offers, and whether Watches uses Lead\_\_c at all is now an open question again (see correction #6). Does touch `Offer_History__c` (one of our 4 custom objects) via `EC_OfferHistoryHandler`/`EC_EbayQueueableApex`, confirming Offer History records can originate from eBay sync too — historical-data awareness only, not a live integration to build. |
+| Outbound Integrations (OUTBOUND_\*, JWT_\*, UTIL_\*) | 14 | **Reviewed.** `OUTBOUND_UpdateOrder` = full confirmed SFDC→SMS Order field mapping (see correction #5 above) — the real "existing sync" reference. `OUTBOUND_CreateWatch` reinterpreted — likely a manual restock/availability-alert button, not inventory/Order creation (see correction #5, now doubly confirmed via the DAL/BLL/DTO doc). `OUTBOUND_GetChat`/Periskope explicitly confirmed skippable by her team. `OUTBOUND_MarkProductAsSold`/`OUTBOUND_UpdateProductStatus`/`WebsiteInStockAction`/`WebsiteOnHoldAction`/`WebsiteSoldAction` all push product status to Magento/website — SFDC-and-Magento-side concern, not currently modeled in our HubSpot Inventory Product object; flag for a decision on whether HubSpot needs an equivalent outbound hook later. `JWT_service*` ×3 = signed-link email delivery for agreements/invoices, maps to a "generate secure link + send email" workflow need in HubSpot, not a data field. `UTIL_Logger`/`UTIL_System`/`UTIL_Integration` = shared infra (logging, prod/sandbox detection, auth token fetching), no HubSpot equivalent needed as data, but the auth pattern is relevant if HubSpot ever calls the SMS directly. |
+| DAL / BLL / DTO Classes | 17 | **Reviewed.** Mostly supporting query/business-logic/DTO layer for classes already covered elsewhere — no new scope, but two standout finds: `Constants` class gives code-level enum values (fixed the `inventory_product.status` PARTIAL list — see findings above), and `DAL_Opportunity.findOpenOpportunitiesByEmail` is real evidence for the still-unwritten search/dedup-keys section of field-mapping.md. `BLL_WhatsappChat` confirmed skippable a third time ("native hubspot integration"). `BLL_Opportunity.sendMessage` (Twilio SMS) is fully commented-out/unimplemented — dead, skip. |
+| Controllers | 14 | **Reviewed.** Confirmed out of scope — almost entirely Lightning/Visualforce UI controllers (community portal login/register/password-reset boilerplate, document-preview orchestration, image galleries) that get replaced wholesale by the new front end, not migrated as data or logic. Two explicitly confirmed dead/unused: `MyProfilePageController` ("not currently in use... legacy boilerplate"). `imageViewerDesignController` reconfirms the `Lead_Attached_Image__c` object name a third time. |
+| Utility / Other | 10 | **Reviewed.** `AWSUtils` confirms the S3 upload mechanics precisely (see S3 filename cross-validation above). `Create1stDibsLead` confirmed **not in use**. `CreateLeadExample`/`CreateLiveChatLead` (Chrono24-branded Lead-creating email handlers) — status genuinely uncertain per the doc's own annotation, this is correction #6, needs a developer answer. `LastCustomerContactEmailHandler` confirmed **actively used** — explains how `last_customer_email_date` actually gets populated (see findings above). `ConvertCurrencyInToWords` explains the `Amount_In_Words__c` field seen in the sample sheet (legal-document text formatting, not separately worth migrating as data). `CurrencyUpdateHelper`/`Scheduler`, `VonageCallSummaryScheduler`, `MultiRequestMock` — infra/unrelated to our object model, no action needed. |
+| WhatsApp/Periskope (System Log, Whatsapp Chat handlers) | — | **Confirmed out of scope**, now from three independent places in the documentation (trigger handler FAQ, Outbound Integrations inline note, `BLL_WhatsappChat` FAQ) — Periskope has a native WhatsApp integration, no need to migrate |
 
-**Scale note for planning:** the POC covered 3 narrow flows. This index alone lists ~120
-Apex classes. Most will triage to out-of-scope (Xupes-only, UI controllers, already-native
-integrations like WhatsApp) or "just a workflow email," but the Order-creation logic,
+**Scale note for planning:** the POC covered 3 narrow flows. This index listed ~120
+Apex classes, all now reviewed at least at summary level. Most triaged to out-of-scope
+(Xupes-only, UI controllers, already-native integrations like WhatsApp) or "just a workflow
+email," but the Order-creation logic,
 document/agreement automation, and outbound stock-system integration layer are substantial
 and belong in the full plan's effort estimate, not treated as an extension of the POC.
+
+## Next step: two questions for the developer block everything else
+
+All 6 correction candidates above are worth sending, but two are load-bearing for the rest of
+the plan and should go first:
+1. **What does `OUTBOUND_CreateWatch` / the original "/api/createWatch" actually do** —
+   restock alert, or something Order/inventory-related? (Correction #1 + #5)
+2. **Is `CreateLeadExample` actually live** — does Chrono24/Watches go through `Lead__c` for
+   inbound offers/messages/orders, or not? (Correction #6)
+
+Everything else in this document can proceed without those answers; the Order-creation model
+and the Lead-vs-no-Lead architecture question can't be finalized without them.

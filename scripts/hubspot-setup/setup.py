@@ -300,7 +300,7 @@ PROPERTIES = {
         TXT("brand", "Brand"),
         TXT("model", "Model"),
         TXT("serial_number", "Serial Number"),
-        SELECT("status", "Status", ["Sold", "In Stock", "Sold By Partner"]),  # PARTIAL
+        SELECT("status", "Status", ["Sold", "In Stock", "On Hold", "Sold By Partner"]),  # PARTIAL — confirmed via Constants class, but not guaranteed exhaustive
         TXT("model_number", "Model Number"),
         TXT("vat_scheme", "Vat Scheme"),
         NUM("rrp", "RRP"),
