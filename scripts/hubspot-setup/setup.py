@@ -117,6 +117,17 @@ CUSTOM_OBJECTS = [
 ]
 
 
+# The /crm/v3/schemas/{x} endpoint accepts the plain "name" (e.g.
+# "inventory_product"), but the properties/groups/associations endpoints do
+# not — they need the actual objectTypeId HubSpot generates at creation
+# (e.g. "2-40080001"). This maps our short names to that id once known.
+OBJECT_TYPE_IDS = {}
+
+
+def resolve(object_type):
+    return OBJECT_TYPE_IDS.get(object_type, object_type)
+
+
 def ensure_object_schema(defn):
     # NOTE: secondaryDisplayProperties/searchableProperties are deliberately left
     # out here — they reference properties that don't exist yet at this point
@@ -125,6 +136,7 @@ def ensure_object_schema(defn):
     # afterwards, once every property actually exists.
     existing = hs("GET", f"/crm/v3/schemas/{defn['name']}")
     if existing["ok"]:
+        OBJECT_TYPE_IDS[defn["name"]] = existing["body"]["objectTypeId"]
         summary["skipped"].append(f"schema:{defn['name']} (already exists)")
         return
     res = hs("POST", "/crm/v3/schemas", {
@@ -142,6 +154,7 @@ def ensure_object_schema(defn):
         ],
     })
     if res["ok"]:
+        OBJECT_TYPE_IDS[defn["name"]] = res["body"]["objectTypeId"]
         summary["created"].append(f"schema:{defn['name']}")
     else:
         summary["failed"].append(f"schema:{defn['name']} -> {res['status']} {json.dumps(res['body'])}")
@@ -178,7 +191,7 @@ OBJECTS_WITH_GROUP = [
 
 
 def ensure_property_group(object_type):
-    res = hs("POST", f"/crm/v3/properties/{object_type}/groups", {
+    res = hs("POST", f"/crm/v3/properties/{resolve(object_type)}/groups", {
         "name": GROUP_NAME,
         "label": GROUP_LABEL,
     })
@@ -369,12 +382,13 @@ PROPERTIES = {
 
 
 def ensure_property(object_type, defn):
-    existing = hs("GET", f"/crm/v3/properties/{object_type}/{defn['name']}")
+    resolved = resolve(object_type)
+    existing = hs("GET", f"/crm/v3/properties/{resolved}/{defn['name']}")
     if existing["ok"]:
         summary["skipped"].append(f"property:{object_type}.{defn['name']} (already exists)")
         return
     payload = {**defn, "groupName": GROUP_NAME}
-    res = hs("POST", f"/crm/v3/properties/{object_type}", payload)
+    res = hs("POST", f"/crm/v3/properties/{resolved}", payload)
     if res["ok"]:
         summary["created"].append(f"property:{object_type}.{defn['name']}")
     else:
@@ -399,13 +413,14 @@ ASSOCIATIONS = [
 
 
 def ensure_association_label(defn):
-    existing = hs("GET", f"/crm/v4/associations/{defn['from']}/{defn['to']}/labels")
+    from_id, to_id = resolve(defn["from"]), resolve(defn["to"])
+    existing = hs("GET", f"/crm/v4/associations/{from_id}/{to_id}/labels")
     if existing["ok"] and isinstance(existing["body"].get("results"), list):
         found = next((r for r in existing["body"]["results"] if r.get("label") == defn["label"]), None)
         if found:
             summary["skipped"].append(f"association:{defn['from']}->{defn['to']}:{defn['label']} (already exists)")
             return
-    res = hs("POST", f"/crm/v4/associations/{defn['from']}/{defn['to']}/labels", {
+    res = hs("POST", f"/crm/v4/associations/{from_id}/{to_id}/labels", {
         "label": defn["label"],
         "name": defn["name"],
     })
