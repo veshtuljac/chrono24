@@ -55,10 +55,12 @@ failed list — paste that back for review if anything's in `failed`.
   carrying the raw 13-value payment method past HubSpot's fixed 9-value
   `hs_payment_method_type` enum. Drop it if that's not wanted.
 - `customer_product.record_type` — confirmed via a live Supabase `GROUP BY`
-  + a production (not sandbox) Developer Console RecordType lookup: the
-  real Watches value is `0124J000000MWTTQA4` ("Watch"), now the only option
-  in `setup.py`. The sheet's original `0121t0000000ljSAAQ` was a
-  sandbox-only Id that doesn't exist in production data at all — see
-  `full-migration-plan.md` correction #4. The "4 unused (Xupes) RecordType
-  variants + unused Restore Handbag RecordType" question is still open, but
+  + a production Developer Console RecordType lookup: the real
+  Agreement_Item__c Watches value is `0124J000000MWTTQA4` ("Watch"), now the
+  only option in `setup.py`. The sheet's original `0121t0000000ljSAAQ` is a
+  real production Id too, just for a different object — it's Product2's
+  "Watch" RecordType, not Agreement_Item__c's (each object has its own
+  separate "Watch" RecordType record/Id) — see `full-migration-plan.md`
+  correction #4. The "4 unused (Xupes) RecordType variants + unused Restore
+  Handbag RecordType" question is still open, but
   doesn't block this property since none of those are the Watches value.

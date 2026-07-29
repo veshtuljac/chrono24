@@ -100,30 +100,48 @@ not Watches.
 assigned to the field the query filters on), empty `execute()`/`finish()`. Never do anything
 even if invoked.
 
-### 4. `customer_product.record_type` — sheet value was a sandbox-only ID, doesn't exist in production
+### 4. `customer_product.record_type` — sheet value was for the wrong SFDC object, not a sandbox artifact
+
+**Correction to this section's own earlier version** — it originally claimed
+`0121t0000000ljSAAQ` was a sandbox-only Id that doesn't exist in production. That was wrong,
+and the sample sheet (Buchanan/Fry raw export, reviewed while building
+`buchanan-fry-poc-data.md`) proves it: `0121t0000000ljSAAQ` **is** a real production Id — it's
+just the "Watch" RecordType on **Product2**, not on **Agreement_Item__c** (Customer Product).
+Both Buchanan's and Fry's Product2 rows show `RecordTypeId = 0121t0000000ljSAAQ` with
+`Record_Type_Name__c = Watch`. So the original sheet didn't pull a sandbox value — it pulled
+the right-shaped value from the wrong object (Product2 instead of Agreement_Item__c), both of
+which happen to have their own separate "Watch" RecordType record with its own separate Id
+(RecordType is scoped per SObjectType, so "Watch" the concept has two different Ids
+depending on which object it's attached to).
 
 Live Supabase query (`GROUP BY RecordTypeId` on Agreement_Item__c) came back with two
-production IDs, neither matching the sheet's `0121t0000000ljSAAQ` (a sandbox-only value —
-sandbox and production have different Id prefixes, established at the start of this project).
-Resolved both via `SELECT Id, Name, DeveloperName, SobjectType FROM RecordType WHERE Id IN
-(...)` in the **production** Developer Console (not sandbox — production IDs, `0124J...`
-prefix):
+production IDs, neither matching `0121t0000000ljSAAQ` — because that Id genuinely belongs to
+a different object, not because it's environment-specific. Resolved both real
+Agreement_Item__c values via `SELECT Id, Name, DeveloperName, SobjectType FROM RecordType
+WHERE Id IN (...)` in the production Developer Console:
 
 | Id | Name | Count in Supabase | Meaning |
 |---|---|---|---|
-| `0124J000000MWTTQA4` | Watch | 18,156 | The real Watches value — use this in `customer_product.record_type`, not the sheet's sandbox ID |
+| `0124J000000MWTTQA4` | Watch | 18,156 | The real Agreement_Item\_\_c Watches value — use this in `customer_product.record_type` |
 | `0124J000000MWTSQA4` | Jewellery | 1 | **Not noise** — a genuine Jewellery-RecordType record present in what was assumed to be a Watches-only dataset |
 | *(null)* | — | 8,130 (31%) | Still open — need to ask the developer whether these predate RecordType being made mandatory, or something else |
 
-**Two actions:**
-1. Fix `customer_product.record_type` (in HubSpot and in `scripts/hubspot-setup/setup.py`) to
-   use `0124J000000MWTTQA4` ("Watch"), not the sandbox ID.
-2. **Scoping implication for history migration:** the Agreement_Item__c dataset used for this
+**Actions:**
+1. `customer_product.record_type` (HubSpot + `scripts/hubspot-setup/setup.py`) uses
+   `0124J000000MWTTQA4` ("Watch" on Agreement_Item\_\_c) — already fixed.
+2. If Inventory Product (Product2) ever gets its own record-type-like property, its "Watch"
+   value is the *other* one: `0121t0000000ljSAAQ`. Not currently mapped as a property (not in
+   the original sheet), noting here so it isn't confused with Customer Product's value later.
+3. **Scoping implication for history migration:** the Agreement_Item__c dataset used for this
    check was not purely Watches — at least one non-Watches (Jewellery) record leaked in. Any
    query built for the real historical migration must explicitly filter
    `RecordTypeId = '0124J000000MWTTQA4'`, not assume the source dataset is already
    Watches-only. Worth spot-checking other objects for the same kind of leakage before trusting
    row counts elsewhere in this plan.
+4. **Process note:** verify object attribution before trusting an ID's meaning, even when the
+   query result "looks" reasonable — this one passed a plausibility check (shape, prefix) but
+   was still wrong. The sample sheet's real per-object data caught it; a shape-only check
+   wouldn't have.
 
 ---
 
