@@ -12,6 +12,9 @@ to POC assumptions that this Apex documentation surfaced.
 | 1 | Confluence doc, shared 2026-07-29 | Apex Classes master index + 8 Trigger Handler/Helper deep-dives (Account, Attachment, ContentDocumentLink ×2, DocumentLinkUploadEvent, InterestedProduct, Lead, OpportunityProduct, Opportunity ×2, OppStatusChange, SystemLog ×2, WhatsappChat) |
 | 2 | Google Doc, shared 2026-07-29 | All 13 REST Endpoints (UploadEnquiryForm, FetchOutstandingBalance, OnlineCheckout, UploadAppointmentForm, UploadContactUsForm, UploadProductImages, UploadSellOrExchange ×3, UploadSourcing ×3, LeadConvert) |
 | 3 | Google Doc, shared 2026-07-29 | All 9 Batch Classes (GoogleAnalytics ×3, LeadAttachmentBatch, LeadContentDocBatch, OpportunityAttachmentBatch, OpportunityContentDocumentBatch, S3AttachmentUploadHandler, S3UploadHandler) |
+| 4 | Google Doc, shared 2026-07-29 | Document Generation (Xupes & Document) — AWSDocumentService, DocumentDataRetriever, DocumentGeneratorService/Controller, DocumentPayloadBuilder, DocumentValidator, and the Xupes-branded equivalents |
+| 5 | Google Doc, shared 2026-07-29 | eBay Integration (EC_\*) — all 10 classes (CreateEbayInboundLead, DebugMessaging, EbayQueueableApex, LeadEbayProcess, LeadLineItemUtility, LeadUtility, OfferHistoryHandler, Product2Utility, RestCallouts, EbayOffer) |
+| 6 | Google Doc, shared 2026-07-29 | Outbound Integrations + JWT + UTIL + Website Flow Actions — OUTBOUND_CreateWatch, OUTBOUND_GetChat, OUTBOUND_MarkProductAsSold, OUTBOUND_UpdateOrder, OUTBOUND_UpdateProductStatus, JWT_service ×3, UTIL_Integration, UTIL_Logger, UTIL_System, WebsiteInStockAction, WebsiteOnHoldAction, WebsiteSoldAction |
 
 ---
 
@@ -143,6 +146,71 @@ WHERE Id IN (...)` in the production Developer Console:
    was still wrong. The sample sheet's real per-object data caught it; a shape-only check
    wouldn't have.
 
+### 5. `OUTBOUND_CreateWatch` may not create inventory at all — reframes the Order-creation-direction question
+
+The Outbound Integrations doc's own description of `OUTBOUND_CreateWatch` hedges: "sending an
+outbound HTTP request to the Stock Management System to create a 'watch' record — **likely
+tracking customer interest in a product for restock/availability alerts**." The confirmed
+payload backs that reading, not "create an inventory item": it sends exactly **3 fields** —
+`opportunityId`, `customerProductId`, `productType` — no watch reference, serial number,
+brand, or model. That's not enough data to create a physical inventory record; it fits a
+"notify me when available" / waitlist signup instead.
+
+**This matters a lot for correction candidate #1.** We already confirmed Order creation is
+internal/stage-triggered Apex, not an inbound call. This finding suggests the "watch" in
+`OUTBOUND_CreateWatch` (and possibly in the original "/api/createWatch" description from the
+POC's starting context) may never have meant "wristwatch inventory" or "Order" at all — it may
+be an unrelated availability-alert feature that happens to share the word "watch" as a pun.
+**Sharpen the question for the developer:** ask specifically "what does `OUTBOUND_CreateWatch`
+actually create — an alert subscription, or something else?" rather than assuming it's
+Order/inventory-related.
+
+**Also resolved in this doc — `OUTBOUND_UpdateOrder` confirms the real Order data flow is
+SFDC → SMS, not the other way:** it sends two payload types ("sell" and "updateOrder") pushing
+existing Order/Opportunity/OrderItem data *out* to the Stock Management System after the Order
+already exists in SFDC:
+
+| SFDC field | Object | Sent as |
+|---|---|---|
+| Id | Order | `salesforce_order_id` (updateOrder) / `orderId` (sell) |
+| Status | Order | `status` |
+| Courier\_\_c | Order | `dispatch_courier` |
+| Tracking\_URL\_\_c | Order | `dispatch_tracking_url` |
+| Product\_Tracking\_URL\_\_c | Order | `packing_tracking_url` |
+| Dispatch\_Courier\_\_c | Order | `packing_courier` |
+| Description | Order | `delivery_notes` |
+| OpportunityId | Order | `outrightPurchaseOpportunityId` (sell) |
+| CurrencyIsoCode | Opportunity | `soldCurrency` (sell) |
+| Total\_Sold\_Price\_\_c | Opportunity | `soldPrice` (sell) |
+| Invoice\_Number\_\_c | Opportunity | `invoiceReference` (sell) — **formula field**, see below |
+| LeadSource | Opportunity | `salesChannel` (sell) |
+| Product2Id (each item) | OrderItem | `salesforce_product_ids` list (updateOrder) |
+| Product2.ProductCode (first item) | OrderItem/Product2 | `barcode` (sell) |
+
+This is a clean, complete reference for what the *existing* SFDC→SMS Order sync sends —
+useful directly as a checklist when designing the equivalent HubSpot→SMS push later.
+
+### Invoice_Number__c source — resolved (open question #4 from the POC, closed)
+
+The Document Generation doc confirms `Invoice_Number__c` on Opportunity is a **formula
+field** (stated explicitly in the `OUTBOUND_UpdateOrder` field table: "Formula field; sent as
+invoiceReference"). It's computed within SFDC itself, not written by the SMS or any external
+process — nothing to replicate as an inbound integration, just a value HubSpot needs to
+either compute the same way (if the formula logic matters) or accept as historical data only.
+`Invoice_Date__c` remains separately explained (set by `ContentDocumentLinkTriggerHelper`
+when an invoice PDF gets linked — see the S3/Attachment findings above). The actual PDF itself
+is generated by an external AWS Lambda process, orchestrated by
+`AWSDocumentService`/`DocumentGeneratorService`/`DocumentPayloadBuilder` — confirmed via this
+doc's `buildInvoicePayload`/`buildInvoiceRecordData` methods, which construct the invoice
+`recordData` (including the invoice number) sent to Lambda for PDF rendering.
+
+### Periskope/WhatsApp — explicit confirmation to skip, from her own team
+
+The Outbound Integrations doc has an inline note on `OUTBOUND_GetChat`: *"We will have direct
+integration with Hubspot and Periskope, can skip these Apex Classes related to Periskope."*
+Matches the earlier finding (System Log / Whatsapp Chat trigger handlers) — now confirmed from
+two independent places in the documentation, not just an assumption.
+
 ---
 
 ## ✅ Open questions this document answers
@@ -178,13 +246,14 @@ Agreement_Item__c to the Order but the visible logic doesn't show it touching
 `Order_Payment__c`. Need to find where (if anywhere) Outright Sale/Purchase Payments get
 their `Order_Payment__c` set — likely a different trigger/flow not yet reviewed.
 
-### Invoice fields on Order (open question #4) — partially answered
+### Invoice fields on Order (open question #4) — now fully answered
 `ContentDocumentLinkTriggerHelper.updateOrderStatus`: when a PDF titled with `INV-` or
 `PRO-` gets linked to an Order or Opportunity, it sets `Order.Status` from Draft →
 "To Be Dispatched" and stamps `Order.Invoice_Date__c` (today) + the parent
-`Opportunity.Invoice_Date__c`. Still open: where `Invoice_Number__c` itself gets set —
-likely in the Document Generation Apex (`DocumentPayloadBuilder` builds "invoices" payloads)
-— need that doc next.
+`Opportunity.Invoice_Date__c`. `Invoice_Number__c` itself is a **formula field** on
+Opportunity (confirmed via the Document Generation + Outbound Integrations docs — see
+correction #5's "Invoice_Number__c source" note) — computed in SFDC, not written by any
+external process.
 
 ### "Agreement" object relationship to Customer Product (open question #6) — answered
 `Agreement_Item__c` **is** the Customer Product custom object (confirms the existing model).
@@ -276,9 +345,9 @@ review as more Confluence docs arrive — not yet deep-dived beyond what's summa
 | Trigger Handlers & Helpers | 17 | **Reviewed in this pass** (8 of 17 deep-dived above); remaining: OpportunityProductTriggerHandler ✅ reviewed, PartExchangeTriggerHandler/Helper (empty stubs, skip) |
 | REST Endpoints | 13 | **Reviewed.** 9 of 13 are Xupes-branded Lead intake with hardcoded department (Handbags/Jewellery/Accessories) — **out of scope**: UploadEnquiryForm, UploadContactUsForm, UploadSellOrExchange ×3, UploadSourcing ×3. `REST_onlineCheckout` also out of scope (Xupes RecordType, see correction #1 update above) but does NOT explain Watches Order creation. Genuinely relevant/needs-review: `REST_fetchOutstandingBalance` (department-agnostic, live balance — see Additional Integration Work #7), `REST_uploadProductImages` (second image-intake path, see S3 answer above), `REST_uploadAppointmentForm` (department comes from payload, not hardcoded — could include Watches, needs confirming), `REST_LeadConvert` (generic Lead→Opportunity conversion via email-matched Account, low priority given Watches barely uses Leads) |
 | Batch Classes | 9 | **Reviewed.** 3 Google Analytics batches — hardcoded to a **Universal Analytics** tracking ID (`UA-126246953-1`), which Google sunset in July 2023, so this is already dead/broken tracking, not just a migration candidate — strong case to drop rather than replicate. `LeadAttachmentBatch`/`LeadContentDocBatch`/`OpportunityContentDocumentBatch` = the real S3 upload logic (see correction #3 above). `OpportunityAttachmentBatch`, `S3AttachmentUploadHandler`, `S3UploadHandler` = confirmed dead stub code, skip entirely. |
-| Document Generation (Xupes & Document) | 19 | Split Chrono24-branded (`DocumentGeneratorService` etc., in scope) vs **Xupes-branded** (`XupesDocumentGeneratorService`, `XupesPartExchange*`, in scope only if Xupes Watches business is in scope — needs confirmation, likely mostly out of scope per "Chrono24 only" framing) |
-| eBay Integration (EC_\*) | 10 | Separate marketplace channel; **touches Offer_History\_\_c** (one of our 4 custom objects) — means Offer History records can originate from eBay sync too, not just the Chrono24 SMS flow. Otherwise likely out of scope for this migration. |
-| Outbound Integrations (OUTBOUND_\*, JWT_\*, UTIL_\*) | 14 | Core SMS-facing integration layer — `OUTBOUND_CreateWatch`, `OUTBOUND_UpdateOrder`, `OUTBOUND_UpdateProductStatus`, `UTIL_Integration` (auth) directly relevant, needs full review next |
+| Document Generation (Xupes & Document) | 19 | **Reviewed (Chrono24 side).** `AWSDocumentService`/`DocumentGeneratorService`/`DocumentDataRetriever`/`DocumentPayloadBuilder`/`DocumentValidator` confirmed as the real invoice/agreement PDF generation pipeline (AWS Lambda-based) — resolves `Invoice_Number__c` (formula field, see correction #5 above). Xupes-branded twins (`XupesDocumentGeneratorService`, `XupesPartExchange*`) not deep-dived — still presumed out of scope per "Chrono24 only" framing, low priority to review further. |
+| eBay Integration (EC_\*) | 10 | **Reviewed.** Confirmed fully out of scope for Chrono24/Watches — creates `Lead__c` records (which Watches doesn't use at all, confirmed separately) from eBay buyer messages/offers. Does touch `Offer_History__c` (one of our 4 custom objects) via `EC_OfferHistoryHandler`/`EC_EbayQueueableApex`, confirming Offer History records can originate from eBay sync too — historical-data awareness only, not a live integration to build. |
+| Outbound Integrations (OUTBOUND_\*, JWT_\*, UTIL_\*) | 14 | **Reviewed.** `OUTBOUND_UpdateOrder` = full confirmed SFDC→SMS Order field mapping (see correction #5 above) — the real "existing sync" reference. `OUTBOUND_CreateWatch` reinterpreted — likely a restock/availability-alert subscription, not inventory/Order creation (see correction #5). `OUTBOUND_GetChat`/Periskope explicitly confirmed skippable by her team. `OUTBOUND_MarkProductAsSold`/`OUTBOUND_UpdateProductStatus`/`WebsiteInStockAction`/`WebsiteOnHoldAction`/`WebsiteSoldAction` all push product status to Magento/website — SFDC-and-Magento-side concern, not currently modeled in our HubSpot Inventory Product object; flag for a decision on whether HubSpot needs an equivalent outbound hook later. `JWT_service*` ×3 = signed-link email delivery for agreements/invoices, maps to a "generate secure link + send email" workflow need in HubSpot, not a data field. `UTIL_Logger`/`UTIL_System`/`UTIL_Integration` = shared infra (logging, prod/sandbox detection, auth token fetching), no HubSpot equivalent needed as data, but the auth pattern is relevant if HubSpot ever calls the SMS directly. |
 | DAL / BLL / DTO Classes | 17 | Supporting query/business-logic/data-transfer layer for the above — review alongside their callers, not standalone |
 | Controllers | 14 | Mostly Lightning/Visualforce UI controllers (community portal, password reset, document preview) — likely **out of scope** (UI layer being replaced, not migrated) |
 | Utility / Other | 10 | Mixed — inbound email parsers (1stDibs, Chrono24, live chat leads) relevant if those channels stay; `CurrencyUpdateHelper`/`Scheduler` (exchange rates) worth checking against `deal_currency_code`/`currency` properties |
