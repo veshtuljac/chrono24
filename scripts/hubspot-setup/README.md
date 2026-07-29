@@ -8,10 +8,12 @@ diagram.
 ## Run
 
 ```
-HUBSPOT_TOKEN=pat-eu1-xxxx node scripts/hubspot-setup/setup.mjs
+HUBSPOT_TOKEN=pat-eu1-xxxx python3 scripts/hubspot-setup/setup.py
 ```
 
-Requires Node 18+ (uses global `fetch`), no dependencies to install.
+Standard library only (`urllib`) — no `pip install` needed. In VS Code, set
+`HUBSPOT_TOKEN` in your terminal first (or in a `.env` your run config
+loads), then just hit Run on `setup.py`.
 
 Safe to re-run — every step checks for an existing schema/group/property/
 association label before creating it, so a partial failure can just be
@@ -37,7 +39,7 @@ failed list — paste that back for review if anything's in `failed`.
 
 ## Known gaps to close before this is production-mapping, not just POC schema
 
-- Several dropdown option lists are marked `PARTIAL` in `setup.mjs` — built
+- Several dropdown option lists are marked `PARTIAL` in `setup.py` — built
   from sample data seen in this conversation, not a confirmed full
   `GROUP BY` against Supabase. Affected: `deals.department`,
   `deals.lead_source_detail`, `inventory_product.status`,
