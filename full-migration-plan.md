@@ -11,6 +11,7 @@ to POC assumptions that this Apex documentation surfaced.
 |---|---|---|
 | 1 | Confluence doc, shared 2026-07-29 | Apex Classes master index + 8 Trigger Handler/Helper deep-dives (Account, Attachment, ContentDocumentLink ×2, DocumentLinkUploadEvent, InterestedProduct, Lead, OpportunityProduct, Opportunity ×2, OppStatusChange, SystemLog ×2, WhatsappChat) |
 | 2 | Google Doc, shared 2026-07-29 | All 13 REST Endpoints (UploadEnquiryForm, FetchOutstandingBalance, OnlineCheckout, UploadAppointmentForm, UploadContactUsForm, UploadProductImages, UploadSellOrExchange ×3, UploadSourcing ×3, LeadConvert) |
+| 3 | Google Doc, shared 2026-07-29 | All 9 Batch Classes (GoogleAnalytics ×3, LeadAttachmentBatch, LeadContentDocBatch, OpportunityAttachmentBatch, OpportunityContentDocumentBatch, S3AttachmentUploadHandler, S3UploadHandler) |
 
 ---
 
@@ -64,6 +65,40 @@ a *different* thing (e.g. a standalone Parts Exchange object/RecordType variant 
 Handbags), distinct from the Watches "Part Exchange" Opportunity type this trigger handles?
 As it stands, Part Exchange looks like real in-scope Watches business logic that needs its
 own HubSpot workflow, not something to skip.
+
+### 3. "Attached Image" custom object — real name and shape differ from the POC model
+
+The POC's field-mapping.md models "Attached Image" with fields `Opportunity__c`, `Name`,
+`Original_Image_URL__c`, `Resized_Image_URL__c`, `Description__c`, `ContentVersionId__c` —
+built from the Ian Fry sample. The Batch Classes doc shows the actual object is
+**`Lead_Attached_Image__c`**, populated by four different batches:
+
+- `LeadAttachmentBatch` / `LeadContentDocBatch` — set **`Lead__c`** as parent (legacy
+  `Attachment` object and `ContentDocument` respectively, both Lead-sourced)
+- `OpportunityContentDocumentBatch` — sets **`Opportunity__c`** as parent instead (the one
+  our POC sample actually exercised, since Watches doesn't use Leads)
+- `OpportunityAttachmentBatch` — **confirmed dead code**, empty stub, unused (per the doc's
+  own FAQ)
+
+So the object has **two mutually-exclusive parent lookups** (`Lead__c` OR `Opportunity__c`
+per record, never both), not just the single `Opportunity__c` our POC modeled — harmless for
+Watches specifically (since Watches records always go through the Opportunity side), but
+worth knowing if any tooling assumes `Opportunity__c` is the only parent field.
+
+**Also found, not yet in our property list:** `Image_RTF__c` — a pre-built HTML snippet
+(anchor-wrapped `<img>` tag pointing at the original image, displaying the resized one),
+generated at upload time for embedding directly into a rich-text field. Candidate to add to
+the Attached Image property list (or deliberately decide it's presentation-layer cruft with
+no HubSpot use, since the equivalent in our model is "append the link into `hs_note_body`").
+
+**Scale note:** `Lead_Attached_Image__c` currently holds **197,068 records** — worth knowing
+for migration volume/performance planning, even though most of that is Xupes/Lead-sourced,
+not Watches.
+
+**Also confirmed dead code, safe to skip entirely:** `S3AttachmentUploadHandler` and
+`S3UploadHandler` — both stub batches with a constructor bug (the incoming Id list is never
+assigned to the field the query filters on), empty `execute()`/`finish()`. Never do anything
+even if invoked.
 
 ---
 
@@ -197,7 +232,7 @@ review as more Confluence docs arrive — not yet deep-dived beyond what's summa
 |---|---|---|
 | Trigger Handlers & Helpers | 17 | **Reviewed in this pass** (8 of 17 deep-dived above); remaining: OpportunityProductTriggerHandler ✅ reviewed, PartExchangeTriggerHandler/Helper (empty stubs, skip) |
 | REST Endpoints | 13 | **Reviewed.** 9 of 13 are Xupes-branded Lead intake with hardcoded department (Handbags/Jewellery/Accessories) — **out of scope**: UploadEnquiryForm, UploadContactUsForm, UploadSellOrExchange ×3, UploadSourcing ×3. `REST_onlineCheckout` also out of scope (Xupes RecordType, see correction #1 update above) but does NOT explain Watches Order creation. Genuinely relevant/needs-review: `REST_fetchOutstandingBalance` (department-agnostic, live balance — see Additional Integration Work #7), `REST_uploadProductImages` (second image-intake path, see S3 answer above), `REST_uploadAppointmentForm` (department comes from payload, not hardcoded — could include Watches, needs confirming), `REST_LeadConvert` (generic Lead→Opportunity conversion via email-matched Account, low priority given Watches barely uses Leads) |
-| Batch Classes | 9 | Mostly S3 upload batches (already covered via trigger docs) + Google Analytics — GA batches are candidates to drop (native HubSpot analytics instead) pending her confirmation |
+| Batch Classes | 9 | **Reviewed.** 3 Google Analytics batches — hardcoded to a **Universal Analytics** tracking ID (`UA-126246953-1`), which Google sunset in July 2023, so this is already dead/broken tracking, not just a migration candidate — strong case to drop rather than replicate. `LeadAttachmentBatch`/`LeadContentDocBatch`/`OpportunityContentDocumentBatch` = the real S3 upload logic (see correction #3 above). `OpportunityAttachmentBatch`, `S3AttachmentUploadHandler`, `S3UploadHandler` = confirmed dead stub code, skip entirely. |
 | Document Generation (Xupes & Document) | 19 | Split Chrono24-branded (`DocumentGeneratorService` etc., in scope) vs **Xupes-branded** (`XupesDocumentGeneratorService`, `XupesPartExchange*`, in scope only if Xupes Watches business is in scope — needs confirmation, likely mostly out of scope per "Chrono24 only" framing) |
 | eBay Integration (EC_\*) | 10 | Separate marketplace channel; **touches Offer_History\_\_c** (one of our 4 custom objects) — means Offer History records can originate from eBay sync too, not just the Chrono24 SMS flow. Otherwise likely out of scope for this migration. |
 | Outbound Integrations (OUTBOUND_\*, JWT_\*, UTIL_\*) | 14 | Core SMS-facing integration layer — `OUTBOUND_CreateWatch`, `OUTBOUND_UpdateOrder`, `OUTBOUND_UpdateProductStatus`, `UTIL_Integration` (auth) directly relevant, needs full review next |
